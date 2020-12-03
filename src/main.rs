@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::string::String;
 use std::vec;
 use structopt::StructOpt;
+use apply::Apply;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -20,21 +21,6 @@ use structopt::StructOpt;
 struct Args {
     #[structopt(parse(from_os_str))]
     input: PathBuf,
-}
-
-trait Call {
-    fn call<F, B>(&mut self, fun: F) -> B
-    where
-        F: FnOnce(&mut Self) -> B;
-}
-
-impl<T> Call for T {
-    fn call<F, B>(&mut self, fun: F) -> B
-    where
-        F: FnOnce(&mut Self) -> B,
-    {
-        fun(self)
-    }
 }
 
 #[allow(non_snake_case)]
@@ -202,13 +188,13 @@ fn main() {
     let (wifis, errs): (Vec<_>, Vec<_>) = contents
         .iter()
         .map(MobileconfWifi::parse)
-        .call(|x| partition_results(x));
+        .apply(partition_results);
     println!("Errs: {:?}", errs);
 
     let (certs, errs): (Vec<_>, Vec<_>) = contents
         .iter()
         .map(MobileconfTLSCert::parse)
-        .call(|x| partition_results(x));
+        .apply(partition_results);
     println!("Errs: {:?}", errs);
 
     println!("Found wifis: {:#?}", wifis);

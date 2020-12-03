@@ -11,3 +11,4 @@ openssl = { git = "https://github.com/sfackler/rust-openssl" }
 structopt = "0.3.21"
 plist = "1"
 base64 = "0.13.0"
+apply = "0.3.0"
