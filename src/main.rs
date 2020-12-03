@@ -1,4 +1,3 @@
-// use std::env;
 use openssl::pkcs7;
 use openssl::stack;
 use openssl::x509::store;
@@ -6,6 +5,7 @@ use plist::Dictionary;
 use plist::Value;
 use std::fs;
 use std::io::Cursor;
+use std::iter;
 use std::path::PathBuf;
 use std::vec;
 use structopt::StructOpt;
@@ -18,6 +18,21 @@ use structopt::StructOpt;
 struct Args {
     #[structopt(parse(from_os_str))]
     input: PathBuf,
+}
+
+trait Call {
+    fn call<F, B>(&mut self, fun: F) -> B
+    where
+        F: FnOnce(&mut Self) -> B;
+}
+
+impl<T> Call for T {
+    fn call<F, B>(&mut self, fun: F) -> B
+    where
+        F: FnOnce(&mut Self) -> B,
+    {
+        fun(self)
+    }
 }
 
 #[allow(non_snake_case)]
@@ -99,6 +114,28 @@ impl MobileconfWifi {
     }
 }
 
+fn partition_results<A, B, T>(v: T) -> (Vec<A>, Vec<B>)
+where
+    T: iter::Iterator<Item = Result<A, B>>,
+{
+    let (oks, errs): (Vec<_>, Vec<_>) = v.into_iter().partition(Result::is_ok);
+
+    (
+        oks.into_iter()
+            .map(|x| match x {
+                Result::Ok(o) => o,
+                Result::Err(_) => panic!(),
+            })
+            .collect(),
+        errs.into_iter()
+            .map(|x| match x {
+                Result::Err(e) => e,
+                Result::Ok(_) => panic!(),
+            })
+            .collect(),
+    )
+}
+
 fn main() {
     let args = Args::from_args();
 
@@ -127,18 +164,13 @@ fn main() {
             .expect("")
     );
 
-    let payloadcontent = dict.expect("").get("PayloadContent");
-    println!("PayloadContent: {:?}", payloadcontent);
-    let (rwifis, rerrs): (Vec<_>, Vec<_>) = dict
+    let (wifis, errs): (Vec<_>, Vec<_>) = dict
         .and_then(|d| d.get("PayloadContent"))
         .and_then(|v| v.as_array())
         .expect("array of contents")
         .into_iter()
         .map(|v| MobileconfWifi::parse(v))
-        .partition(Result::is_ok);
-
-    let wifis: Vec<_> = rwifis.into_iter().map(Result::unwrap).collect();
-    let errs: Vec<_> = rerrs.into_iter().map(Result::unwrap_err).collect();
+        .call(|x| partition_results(x));
 
     println!("Found wifis: {:#?}", wifis);
     println!("Errs: {:?}", errs);
