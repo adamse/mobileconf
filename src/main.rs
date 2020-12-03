@@ -64,7 +64,7 @@ impl MobileconfWifi {
         let dict = v.as_dictionary().expect("");
 
         if let Result::Ok(typ) = get_string(dict, "PayloadType") {
-            if typ != "com.apple.wifi.managed".to_string() {
+            if typ != *"com.apple.wifi.managed" {
                 return Result::Err("Not a wifi".to_string());
             }
         }
@@ -91,8 +91,8 @@ impl MobileconfWifi {
                 .ok_or("expected array: TLSTrustedServerNames")
                 .map(|vec| {
                     vec.iter()
-                        .filter_map(|val| val.as_string())
-                        .map(|x| x.to_string())
+                        .filter_map(Value::as_string)
+                        .map(str::to_string)
                         .collect()
                 }),
             None => Result::Ok(Vec::new()),
@@ -132,8 +132,8 @@ impl MobileconfTLSCert {
         let dict = v.as_dictionary().expect("");
 
         if let Result::Ok(typ) = get_string(dict, "PayloadType") {
-            if !(typ == "com.apple.security.pem".to_string()
-                || typ == "com.apple.security.root".to_string())
+            if !(typ == *"com.apple.security.pem"
+                || typ == *"com.apple.security.root")
             {
                 return Result::Err("Not a TLS certificate".to_string());
             }
@@ -160,22 +160,15 @@ fn partition_results<A, B, T>(v: T) -> (Vec<A>, Vec<B>)
 where
     T: iter::Iterator<Item = Result<A, B>>,
 {
-    let (oks, errs): (Vec<_>, Vec<_>) = v.partition(Result::is_ok);
+    let mut oks = Vec::new();
+    let mut errs = Vec::new();
 
-    (
-        oks.into_iter()
-            .map(|x| match x {
-                Result::Ok(o) => o,
-                Result::Err(_) => panic!(),
-            })
-            .collect(),
-        errs.into_iter()
-            .map(|x| match x {
-                Result::Ok(_) => panic!(),
-                Result::Err(e) => e,
-            })
-            .collect(),
-    )
+    v.for_each(|x| match x {
+      Result::Ok(ok) => oks.push(ok),
+      Result::Err(err) => errs.push(err),
+    });
+
+    (oks, errs)
 }
 
 fn main() {
