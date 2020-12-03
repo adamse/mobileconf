@@ -1,3 +1,4 @@
+use base64;
 use openssl::pkcs7;
 use openssl::stack;
 use openssl::x509::store;
@@ -7,6 +8,7 @@ use std::fs;
 use std::io::Cursor;
 use std::iter;
 use std::path::PathBuf;
+use std::string::String;
 use std::vec;
 use structopt::StructOpt;
 
@@ -47,19 +49,19 @@ struct MobileconfWifi {
     TTLSInnerAuthentication: String,
 }
 
+fn get_string(dict: &Dictionary, key: &str) -> Result<String, String> {
+    dict.get(key)
+        .ok_or(format!("missing key: {}", key))?
+        .as_string()
+        .ok_or(format!("key not a string: {}", key))
+        .map(str::to_string)
+}
+
 #[allow(non_snake_case)]
 impl MobileconfWifi {
     #[allow(non_snake_case)]
     fn parse(v: &Value) -> Result<Self, String> {
         let dict = v.as_dictionary().expect("");
-
-        let get_string = |dict: &Dictionary, key| {
-            dict.get(key)
-                .ok_or(format!("missing key: {}", key))?
-                .as_string()
-                .ok_or(format!("key not a string: {}", key))
-                .map(str::to_string)
-        };
 
         if let Result::Ok(typ) = get_string(dict, "PayloadType") {
             if typ != "com.apple.wifi.managed".to_string() {
@@ -77,24 +79,22 @@ impl MobileconfWifi {
             .get("PayloadCertificateAnchorUUID")
             .ok_or("no PayloadCertificateAnchorUUID")?
             .as_array()
-            .ok_or("no PayloadCertificateAnchorUUID array")
-            .map(|vec| {
-                vec.iter()
-                    .filter_map(|val| val.as_string())
-                    .map(|x| x.to_string())
-                    .collect()
-            })?;
+            .ok_or("expected array: PayloadCertificateAnchorUUID")?
+            .iter()
+            .filter_map(Value::as_string)
+            .map(str::to_string)
+            .collect();
 
         let TLSTrustedServerNames = match EAPClientConfiguration.get("TLSTrustedServerNames") {
             Some(tls_servers) => tls_servers
                 .as_array()
+                .ok_or("expected array: TLSTrustedServerNames")
                 .map(|vec| {
                     vec.iter()
                         .filter_map(|val| val.as_string())
                         .map(|x| x.to_string())
                         .collect()
-                })
-                .ok_or("TLSTrustedServerNames"),
+                }),
             None => Result::Ok(Vec::new()),
         }?;
 
@@ -114,6 +114,44 @@ impl MobileconfWifi {
             UserPassword,
             SSID,
             TTLSInnerAuthentication,
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug)]
+struct MobileconfTLSCert {
+    PayloadUUID: String,
+    // tls cert bytes
+    PayloadContent: String,
+}
+
+impl MobileconfTLSCert {
+    #[allow(non_snake_case)]
+    fn parse(v: &Value) -> Result<Self, String> {
+        let dict = v.as_dictionary().expect("");
+
+        if let Result::Ok(typ) = get_string(dict, "PayloadType") {
+            if !(typ == "com.apple.security.pem".to_string()
+                || typ == "com.apple.security.root".to_string())
+            {
+                return Result::Err("Not a TLS certificate".to_string());
+            }
+        }
+
+        let PayloadUUID = get_string(dict, "PayloadUUID")?;
+
+        let data: &[u8] = dict
+            .get("PayloadContent")
+            .ok_or("missing key: PayloadContent")?
+            .as_data()
+            .ok_or("expected data")?;
+
+        let PayloadContent = base64::encode(data);
+
+        Result::Ok(MobileconfTLSCert {
+            PayloadUUID,
+            PayloadContent,
         })
     }
 }
@@ -174,7 +212,14 @@ fn main() {
         .iter()
         .map(|v| MobileconfWifi::parse(v))
         .call(|x| partition_results(x));
+    println!("Errs: {:?}", errs);
+
+    let (certs, errs): (Vec<_>, Vec<_>) = contents
+        .iter()
+        .map(|v| MobileconfTLSCert::parse(v))
+        .call(|x| partition_results(x));
+    println!("Errs: {:?}", errs);
 
     println!("Found wifis: {:#?}", wifis);
-    println!("Errs: {:?}", errs);
+    println!("Found certs: {:#?}", certs);
 }

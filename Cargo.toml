@@ -10,3 +10,4 @@ edition = "2018"
 openssl = { git = "https://github.com/sfackler/rust-openssl" }
 structopt = "0.3.21"
 plist = "1"
+base64 = "0.13.0"
