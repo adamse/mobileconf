@@ -132,9 +132,7 @@ impl MobileconfTLSCert {
         let dict = v.as_dictionary().expect("");
 
         if let Result::Ok(typ) = get_string(dict, "PayloadType") {
-            if !(typ == *"com.apple.security.pem"
-                || typ == *"com.apple.security.root")
-            {
+            if !(typ == *"com.apple.security.pem" || typ == *"com.apple.security.root") {
                 return Result::Err("Not a TLS certificate".to_string());
             }
         }
@@ -164,8 +162,8 @@ where
     let mut errs = Vec::new();
 
     v.for_each(|x| match x {
-      Result::Ok(ok) => oks.push(ok),
-      Result::Err(err) => errs.push(err),
+        Result::Ok(ok) => oks.push(ok),
+        Result::Err(err) => errs.push(err),
     });
 
     (oks, errs)
@@ -203,13 +201,13 @@ fn main() {
 
     let (wifis, errs): (Vec<_>, Vec<_>) = contents
         .iter()
-        .map(|v| MobileconfWifi::parse(v))
+        .map(MobileconfWifi::parse)
         .call(|x| partition_results(x));
     println!("Errs: {:?}", errs);
 
     let (certs, errs): (Vec<_>, Vec<_>) = contents
         .iter()
-        .map(|v| MobileconfTLSCert::parse(v))
+        .map(MobileconfTLSCert::parse)
         .call(|x| partition_results(x));
     println!("Errs: {:?}", errs);
 
