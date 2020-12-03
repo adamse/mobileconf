@@ -55,8 +55,10 @@ impl MobileconfWifi {
 
         let get_string = |dict: &Dictionary, key| {
             dict.get(key)
-                .and_then(|x| x.as_string().map(|x| x.to_string()))
-                .ok_or(key)
+                .ok_or(format!("missing key: {}", key))?
+                .as_string()
+                .ok_or(format!("key not a string: {}", key))
+                .map(str::to_string)
         };
 
         if let Result::Ok(typ) = get_string(dict, "PayloadType") {
@@ -67,13 +69,15 @@ impl MobileconfWifi {
 
         let EAPClientConfiguration = dict
             .get("EAPClientConfiguration")
-            .ok_or("no EAPClientConfiguration")
-            .and_then(|x| x.as_dictionary().ok_or("EAPClientConfiguration not a dict"))?;
+            .ok_or("no EAPClientConfiguration")?
+            .as_dictionary()
+            .ok_or("EAPClientConfiguration not a dict")?;
 
         let PayloadCertificateAnchorUUID = EAPClientConfiguration
             .get("PayloadCertificateAnchorUUID")
-            .ok_or("no PayloadCertificateAnchorUUID")
-            .and_then(|x| x.as_array().ok_or("no PayloadCertificateAnchorUUID array"))
+            .ok_or("no PayloadCertificateAnchorUUID")?
+            .as_array()
+            .ok_or("no PayloadCertificateAnchorUUID array")
             .map(|vec| {
                 vec.iter()
                     .filter_map(|val| val.as_string())
@@ -118,7 +122,7 @@ fn partition_results<A, B, T>(v: T) -> (Vec<A>, Vec<B>)
 where
     T: iter::Iterator<Item = Result<A, B>>,
 {
-    let (oks, errs): (Vec<_>, Vec<_>) = v.into_iter().partition(Result::is_ok);
+    let (oks, errs): (Vec<_>, Vec<_>) = v.partition(Result::is_ok);
 
     (
         oks.into_iter()
@@ -129,8 +133,8 @@ where
             .collect(),
         errs.into_iter()
             .map(|x| match x {
-                Result::Err(e) => e,
                 Result::Ok(_) => panic!(),
+                Result::Err(e) => e,
             })
             .collect(),
     )
@@ -143,32 +147,31 @@ fn main() {
     let p7 = pkcs7::Pkcs7::from_der(&bytes[..]).expect("read pkcs7");
 
     // we just want to get the payload, these inputs gets us that.
+
     let stack = stack::Stack::new().expect("new cert stack");
+
     let store = store::X509StoreBuilder::new()
         .expect("new cert store")
         .build();
+
     let mut flags = pkcs7::Pkcs7Flags::empty();
     flags.insert(pkcs7::Pkcs7Flags::NOVERIFY);
 
     let mut xml: vec::Vec<u8> = vec::Vec::new();
 
     p7.verify(&stack, &store, None, Some(&mut xml), flags)
-        .expect("extracted");
+        .expect("verify and extract pkcs7 payload");
 
     let plist = Value::from_reader(Cursor::new(xml)).expect("plist");
     let dict = plist.as_dictionary();
-    println!(
-        "PayloadDescription: {}",
-        dict.and_then(|d| d.get("PayloadDescription"))
-            .and_then(|x| x.as_string())
-            .expect("")
-    );
 
-    let (wifis, errs): (Vec<_>, Vec<_>) = dict
+    let contents = dict
         .and_then(|d| d.get("PayloadContent"))
         .and_then(|v| v.as_array())
-        .expect("array of contents")
-        .into_iter()
+        .expect("array of contents");
+
+    let (wifis, errs): (Vec<_>, Vec<_>) = contents
+        .iter()
         .map(|v| MobileconfWifi::parse(v))
         .call(|x| partition_results(x));
 
