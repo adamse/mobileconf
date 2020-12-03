@@ -2,9 +2,11 @@
 use openssl::pkcs7;
 use openssl::stack;
 use openssl::x509::store;
+use plist::Dictionary;
+use plist::Value;
 use std::fs;
+use std::io::Cursor;
 use std::path::PathBuf;
-use std::str;
 use std::vec;
 use structopt::StructOpt;
 
@@ -16,6 +18,85 @@ use structopt::StructOpt;
 struct Args {
     #[structopt(parse(from_os_str))]
     input: PathBuf,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug)]
+struct MobileconfWifi {
+    // pointer to the certificate to use for this connection
+    PayloadCertificateAnchorUUID: Vec<String>,
+    TLSTrustedServerNames: Vec<String>,
+    UserName: String,
+    UserPassword: String,
+    SSID: String,
+    TTLSInnerAuthentication: String,
+}
+
+#[allow(non_snake_case)]
+impl MobileconfWifi {
+    #[allow(non_snake_case)]
+    fn parse(v: &Value) -> Result<Self, String> {
+        let dict = v.as_dictionary().expect("");
+
+        let get_string = |dict: &Dictionary, key| {
+            dict.get(key)
+                .and_then(|x| x.as_string().map(|x| x.to_string()))
+                .ok_or(key)
+        };
+
+        if let Result::Ok(typ) = get_string(dict, "PayloadType") {
+            if typ != "com.apple.wifi.managed".to_string() {
+                return Result::Err("Not a wifi".to_string());
+            }
+        }
+
+        let EAPClientConfiguration = dict
+            .get("EAPClientConfiguration")
+            .ok_or("no EAPClientConfiguration")
+            .and_then(|x| x.as_dictionary().ok_or("EAPClientConfiguration not a dict"))?;
+
+        let PayloadCertificateAnchorUUID = EAPClientConfiguration
+            .get("PayloadCertificateAnchorUUID")
+            .ok_or("no PayloadCertificateAnchorUUID")
+            .and_then(|x| x.as_array().ok_or("no PayloadCertificateAnchorUUID array"))
+            .map(|vec| {
+                vec.iter()
+                    .filter_map(|val| val.as_string())
+                    .map(|x| x.to_string())
+                    .collect()
+            })?;
+
+        let TLSTrustedServerNames = match EAPClientConfiguration.get("TLSTrustedServerNames") {
+            Some(tls_servers) => tls_servers
+                .as_array()
+                .map(|vec| {
+                    vec.iter()
+                        .filter_map(|val| val.as_string())
+                        .map(|x| x.to_string())
+                        .collect()
+                })
+                .ok_or("TLSTrustedServerNames"),
+            None => Result::Ok(Vec::new()),
+        }?;
+
+        let UserName = get_string(EAPClientConfiguration, "UserName")?;
+
+        let UserPassword = get_string(EAPClientConfiguration, "UserPassword")?;
+
+        let SSID = get_string(dict, "SSID_STR")?;
+
+        let TTLSInnerAuthentication =
+            get_string(EAPClientConfiguration, "TTLSInnerAuthentication")?;
+
+        Result::Ok(MobileconfWifi {
+            PayloadCertificateAnchorUUID,
+            TLSTrustedServerNames,
+            UserName,
+            UserPassword,
+            SSID,
+            TTLSInnerAuthentication,
+        })
+    }
 }
 
 fn main() {
@@ -35,7 +116,30 @@ fn main() {
     let mut xml: vec::Vec<u8> = vec::Vec::new();
 
     p7.verify(&stack, &store, None, Some(&mut xml), flags)
-        .expect("verified");
+        .expect("extracted");
 
-    println!("{}", str::from_utf8(&xml[..]).expect("utf8"));
+    let plist = Value::from_reader(Cursor::new(xml)).expect("plist");
+    let dict = plist.as_dictionary();
+    println!(
+        "PayloadDescription: {}",
+        dict.and_then(|d| d.get("PayloadDescription"))
+            .and_then(|x| x.as_string())
+            .expect("")
+    );
+
+    let payloadcontent = dict.expect("").get("PayloadContent");
+    println!("PayloadContent: {:?}", payloadcontent);
+    let (rwifis, rerrs): (Vec<_>, Vec<_>) = dict
+        .and_then(|d| d.get("PayloadContent"))
+        .and_then(|v| v.as_array())
+        .expect("array of contents")
+        .into_iter()
+        .map(|v| MobileconfWifi::parse(v))
+        .partition(Result::is_ok);
+
+    let wifis: Vec<_> = rwifis.into_iter().map(Result::unwrap).collect();
+    let errs: Vec<_> = rerrs.into_iter().map(Result::unwrap_err).collect();
+
+    println!("Found wifis: {:#?}", wifis);
+    println!("Errs: {:?}", errs);
 }
